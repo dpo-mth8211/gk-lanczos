@@ -588,3 +588,5 @@ table_curve_algos_mraug("well1850", ["minres","minres_qlp","symmlq","minares"])
 ![](AUG_well1850.pdf)
 
 Commenter ces résultats sur base de ce qui a été vu en classe.
+
+- Meme commentaires que préc&dement, sauf que j'ai oublié de mentionner que le résidu d'optimalité pour points selles est nul (dans tout l'exercice). 
