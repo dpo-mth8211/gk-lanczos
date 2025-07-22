@@ -82,11 +82,13 @@ Votre tableau doit montrer
 ```{julia}
 function table_curve_algos_ls(matrix_name::String, algo_names::Vector{String})
     A, bmat = get_mm(matrix_name)
+    n, m = size(A)
     b = bmat[:, 1]
-    # A doit etre de rang maximale
-    xast = A \ b
+    
     errors = Dict{String, Vector{Float64}}()
     stats_map = Dict{String, Any}()
+    # A doit etre de rang maximale
+    xast = A \ b
 
     # Callback générique
     function make_callback(name)
@@ -101,20 +103,21 @@ function table_curve_algos_ls(matrix_name::String, algo_names::Vector{String})
     for name in algo_names
         callback = make_callback(name)
         solver = getproperty(Krylov, Symbol(name))
-        (x, stats) = solver(A, b; history=true, callback=callback)
+        (x,stats) = solver(A, b; history=true, callback=callback)
         stats_map[name] = stats
     end
 
     # Fonction pour extraire stats
     function extract_stats(stats)
-        return vcat(stats.niter,
+            return vcat(stats.niter,
                     stats.residuals[1], stats.residuals[end],
                     stats.Aresiduals[1], stats.Aresiduals[end])
     end
-
     # Génération du tableau
     col_names = vcat("# itérations", "‖r‖ (initial)", "‖r‖ (final)",
                      "‖Aᵗr‖ (initial)", "‖Aᵗr‖ (final)")
+
+
     data = col_names
     headers = [""]
     for name in algo_names
@@ -147,9 +150,10 @@ function table_curve_algos_ls(matrix_name::String, algo_names::Vector{String})
         plot!(stats.Aresiduals, label="‖Aᵗr‖ $name", lw=2)
         plot!(errors[name], label="‖err‖ $name", lw=2)
         end 
-end
 
+    end
     savefig("LS_$(matrix_name).pdf")
+    
 end
 ```
 
@@ -160,7 +164,7 @@ Tracer sur un graphe l'évolution du résidu aux moindres carrés, du résidu d'
 ```{julia}
 table_curve_algos_ls("illc1033", ["lsqr", "lsmr"])
 ```
-![](LS_illc1033.pdf)
+![](LS_illc1033.pdf);
 
 
 ## Expérience avec `illc1850`
@@ -168,7 +172,7 @@ table_curve_algos_ls("illc1033", ["lsqr", "lsmr"])
 ```{julia}
 table_curve_algos_ls("illc1850", ["lsqr", "lsmr"])
 ```
-![](LS_illc1850.pdf)
+![](LS_illc1850.pdf);
 
 
 ## Expérience avec `well1033`
@@ -176,7 +180,7 @@ table_curve_algos_ls("illc1850", ["lsqr", "lsmr"])
 ```{julia}
 table_curve_algos_ls("well1033", ["lsqr", "lsmr"])
 ```
-![](LS_well1033.pdf)
+![](LS_well1033.pdf);
 
 
 ## Expérience avec `well1850`
@@ -185,7 +189,7 @@ table_curve_algos_ls("well1033", ["lsqr", "lsmr"])
 table_curve_algos_ls("well1850", ["lsqr", "lsmr"])
 ```
 
-![](LS_well1850.pdf)
+![](LS_well1850.pdf);
 
 
 Commenter ces résultats sur base de ce qui a été vu en classe.
@@ -205,31 +209,42 @@ Commenter ces résultats sur base de ce qui a été vu en classe.
 Répéter la question précédente en appliquant MINRES, MINRES-QLP, MINARES et SYMMLQ sur le système de point de selle et produire un tableau semblable.
 
 ```{julia}
-function table_curve_algos_aug(matrix_name::String, algo_names::Vector{String})
+function table_curve_algos_aug(matrix_name::String, algo_names::Vector{String}, method = "A")
     A, bmat = get_mm(matrix_name)
     b = bmat[:, 1]
-    # Système augementé
     n, m = size(A)
     δ = 0.0
-    K = [sparse(1.0I,n,n) A; A' -δ*I]  # introduction d'une perturbation pour rendre le système quasi-défini
-    rhs = [b; zeros(m)];
+    if method == "A"
+        # Système augementé
+        K = [sparse(1.0I,n,n) A; A' -δ*I]  # introduction d'une perturbation pour rendre le système quasi-défini
+        rhs = [b; zeros(m)];
+    elseif method == "Adjoint"
+        # Système augementé
+        δ = 0.0
+        K = [sparse(1.0I,m,m) A'; A -δ*I]  # introduction d'une perturbation pour rendre le système quasi-défini
+        rhs = [b[1:m]; zeros(n)];
+    end 
 
     Ares = Dict{String, Vector{Float64}}()
     stats_map = Dict{String, Any}()
 
     # Callback générique
-    function make_callback(name)
+    function make_callback(name,method)
         # On peut extraire A'r directement du résidu du points selles!
         # Implémentation basique
         Ares[name] = []
         return function(workspace)
+            if method == "A"
             push!(Ares[name], norm(A'*workspace.x[1:n]))
+            elseif method == "Adjoint"
+            push!(Ares[name], norm(A*workspace.x[1:m]))
+            end
             return false
         end
     end
     # Appliquer chaque méthode
     for name in algo_names
-        callback = make_callback(name)
+        callback = make_callback(name,method)
         solver = getproperty(Krylov, Symbol(name))
         (x, stats) = solver(K, rhs; history=true,callback=callback)
         stats_map[name] = stats
@@ -286,7 +301,11 @@ function table_curve_algos_aug(matrix_name::String, algo_names::Vector{String})
         end
     end
 
-    savefig("AUG_$(matrix_name).pdf")
+    if method == "A"
+        savefig("AUG_$(matrix_name).pdf")
+    elseif method == "Adjoint"
+        savefig("AUG_Adjoint_$(matrix_name).pdf")
+    end
 end
 ```
 
@@ -298,7 +317,7 @@ Tracer sur un graphe l'évolution du résidu d'optimalité du problème aux moin
 table_curve_algos_aug("illc1033", ["minres","minres_qlp","symmlq","minares"])
 ```
 
-![](AUG_illc1850.pdf)
+![](AUG_illc1850.pdf);
 
 
 ## Expérience avec `illc1850`
@@ -306,7 +325,7 @@ table_curve_algos_aug("illc1033", ["minres","minres_qlp","symmlq","minares"])
 ```{julia}
 table_curve_algos_aug("illc1850", ["minres","minres_qlp","symmlq","minares"])
 ```
-![](AUG_illc1850.pdf)
+![](AUG_illc1850.pdf);
 
 
 ## Expérience avec `well1033`
@@ -314,7 +333,7 @@ table_curve_algos_aug("illc1850", ["minres","minres_qlp","symmlq","minares"])
 ```{julia}
 table_curve_algos_aug("well1033", ["minres","minres_qlp","symmlq","minares"])
 ```
-![](AUG_well1033.pdf)
+![](AUG_well1033.pdf);
 
 
 ## Expérience avec `well1850`
@@ -322,7 +341,7 @@ table_curve_algos_aug("well1033", ["minres","minres_qlp","symmlq","minares"])
 ```{julia}
 table_curve_algos_aug("well1850", ["minres","minres_qlp","symmlq","minares"])
 ```
-![](AUG_well1850.pdf)
+![](AUG_well1850.pdf);
 
 Commenter ces résultats sur base de ce qui a été vu en classe.
 
@@ -349,6 +368,7 @@ Tracer sur un graphe l'évolution de la norme de la solution et de l'erreur en n
 function table_curve_algos_mr(matrix_name::String, algo_names::Vector{String})
     A, bmat = get_mm(matrix_name)
     n, m = size(A)
+    
     A = A'
     b = bmat[:, 1]
     b = b[1:m]
@@ -373,7 +393,11 @@ function table_curve_algos_mr(matrix_name::String, algo_names::Vector{String})
     for name in algo_names
         callback = make_callback(name)
         solver = getproperty(Krylov, Symbol(name))
-        (x, stats) = solver(A, b; history=true, callback=callback)
+        if name == "craig"
+            (x,y,stats) = solver(A, b; history=true, callback=callback)
+        else 
+            (x,stats) = solver(A, b; history=true, callback=callback)
+        end
         stats_map[name] = stats
     end
 
@@ -430,163 +454,82 @@ Tracer sur un graphe l'évolution du résidu aux moindres carrés, du résidu d'
 ## Expérience avec `illc1033`
 
 ```{julia}
-table_curve_algos_mr("illc1033", ["lsqr", "lsmr"])
+table_curve_algos_mr("illc1033", ["craig", "lsqr", "lsmr"])
 ```
-![](MR_illc1033.pdf)
+![](MR_illc1033.pdf);
 
 
 ## Expérience avec `illc1850`
 
 ```{julia}
-table_curve_algos_mr("illc1850", ["lsqr", "lsmr"])
+table_curve_algos_mr("illc1850", ["craig","lsqr", "lsmr"])
 ```
-![](MR_illc1850.pdf)
+![](MR_illc1850.pdf);
 
 
 ## Expérience avec `well1033`
 
 ```{julia}
-table_curve_algos_mr("well1033", ["lsqr", "lsmr"])
+table_curve_algos_mr("well1033", ["craig","lsqr", "lsmr"])
 ```
-![](MR_well1033.pdf)
+![](MR_well1033.pdf);
 
 
 ## Expérience avec `well1850`
 
 ```{julia}
-table_curve_algos_mr("well1850", ["lsqr", "lsmr"])
+table_curve_algos_mr("well1850", ["craig","lsqr", "lsmr"])
 ```
 
-![](MR_well1850.pdf)
+
+![](MR_well1850.pdf);
 
 Commenter ces résultats sur base de ce qui a été vu en classe.
 
-- Les deux méthodes produisents des erreurs monotones décroissantes, et des normes des itérées croissants.
-
+- Les trois méthodes produisents des erreurs monotones décroissantes, et des normes des itérées croissants.
+- La méthode de Craig semble moins performante en termes de nombre d’itérations. Toutefois, aucune conclusion définitive ne peut être tirée, car les statuts finaux diffèrent de ceux de `lsqr` et `lsmr` (différence de critère d'arret atteint).
+- Sur les courbes, la méthode de Craig donne les meilleurs résultats, ce qui est cohérent puisqu’elle minimise cette quantité.
 ### Méthodes basées sur Lanczos
 
 Répéter la question précédente en appliquant MINRES, MINRES-QLP, MINARES et SYMMLQ sur le système de point de selle et produire un tableau semblable.
 
-```{julia}
-function table_curve_algos_mraug(matrix_name::String, algo_names::Vector{String})
-    A, bmat = get_mm(matrix_name)
-    n, m = size(A)
-    A = A'
-    b = bmat[:, 1]
-    b = b[1:m]
-    # Système augementé
-    δ = 0.0
-    K = [sparse(1.0I,m,m) A; A' -δ*I]  # introduction d'une perturbation pour rendre le système quasi-défini
-    rhs = [b; zeros(n)];
-
-    Ares = Dict{String, Vector{Float64}}()
-    stats_map = Dict{String, Any}()
-
-    # Callback générique
-    function make_callback(name)
-        # On peut extraire A'r directement du résidu du points selles!
-        # Implémentation basique
-        Ares[name] = []
-        return function(workspace)
-            push!(Ares[name], norm(A'*workspace.x[1:m]))
-            return false
-        end
-    end
-    # Appliquer chaque méthode
-    for name in algo_names
-        callback = make_callback(name)
-        solver = getproperty(Krylov, Symbol(name))
-        (x, stats) = solver(K, rhs; history=true,callback=callback)
-        stats_map[name] = stats
-    end
-
-    # Fonction pour extraire stats
-    function extract_stats(stats, method)
-        if method == "symmlq"
-          return vcat(stats.niter,
-                    stats.residuals[1], stats.residuals[end],
-                    "-" , "-")
-        else
-          return vcat(stats.niter,
-                    stats.residuals[1], stats.residuals[end],
-                    stats.Aresiduals[1], stats.Aresiduals[end])
-        end
-    end
-
-    # Génération du tableau
-    col_names = vcat("# itérations", "‖r‖ (initial)", "‖r‖ (final)",
-                     "‖Aᵗr‖ (initial)", "‖Aᵗr‖ (final)")
-    data = col_names
-    headers = [""]
-    for name in algo_names
-        push!(headers, name)
-        data = hcat(data, extract_stats(stats_map[name],name))
-    end
-
-    # Affichage
-    pretty_table(data; header=headers, tf=tf_markdown)
-
-    # Affichage du statut
-    for name in algo_names
-        println("Statut final pour $(name) : ", string(stats_map[name].status))
-    end
-    # Tracé
-    gr()
-    first_plot = true
-    for name in algo_names
-        stats = stats_map[name]
-        Aresiduals = filter(x -> x > 0, Ares[name])
-
-        if first_plot
-            plot(stats.residuals, label="‖r‖ $name", lw=2, yaxis=:log, xlabel="Itération")
-            plot(Aresiduals, label="‖Ar LS‖ $name", lw=2, yaxis=:log,
-            linestyle=:solid)
-            first_plot = false
-        else
-            plot!(stats.residuals, label="‖r‖ $name", lw=2, yaxis=:log,linestyle=:dot)
-            plot!(Aresiduals, label="‖Ar LS‖ $name", lw=2, yaxis=:log,
-            linestyle=:solid)
-        end
-    end
-
-    savefig("MRAUG_$(matrix_name).pdf")
-end
-```
 
 Tracer sur un graphe l'évolution du résidu d'optimalité du problème aux moindres carrés et du résidu du système de point de selle.
 
 ## Expérience avec `illc1033`
 
 ```{julia}
-table_curve_algos_mraug("illc1033", ["minres","minres_qlp","symmlq","minares"])
+table_curve_algos_aug("illc1033", ["minres","minres_qlp","symmlq","minares"], "Adjoint")
 ```
 
-![](MRAUG_illc1850.pdf)
+![](AUG_Adjoint_illc1850.pdf);
 
 
 ## Expérience avec `illc1850`
 
 ```{julia}
-table_curve_algos_mraug("illc1850", ["minres","minres_qlp","symmlq","minares"])
+table_curve_algos_aug("illc1850", ["minres","minres_qlp","symmlq","minares"], "Adjoint")
 ```
-![](MRAUG_illc1850.pdf)
+![](AUG_Adjoint_illc1850.pdf);
 
 
 ## Expérience avec `well1033`
 
 ```{julia}
-table_curve_algos_mraug("well1033", ["minres","minres_qlp","symmlq","minares"])
+table_curve_algos_aug("well1033", ["minres","minres_qlp","symmlq","minares"], "Adjoint")
 ```
-![](MRAUG_well1033.pdf)
+![](AUG_Adjoint_well1033.pdf);
 
 
 ## Expérience avec `well1850`
 
 ```{julia}
-table_curve_algos_mraug("well1850", ["minres","minres_qlp","symmlq","minares"])
+table_curve_algos_aug("well1850", ["minres","minres_qlp","symmlq","minares"], "Adjoint")
 ```
-![](AUG_well1850.pdf)
+![](AUG_Adjoint_well1850.pdf);
+
 
 Commenter ces résultats sur base de ce qui a été vu en classe.
 
-- Meme commentaires que préc&dement, sauf que j'ai oublié de mentionner que le résidu d'optimalité pour points selles est nul (dans tout l'exercice). 
+- Meme commentaires que précédement, sauf que j'ai oublié de mentionner que le résidu d'optimalité pour points selles (pas pour les problèmes primales "least square" ou "norme minimale") est nul (dans tout l'exercice). 
+- De plus, dans tout l’exercice, `symmlq` retourne systématiquement le même statut. Le critère d’arrêt atteint (associé au status je suppose) lui permet de converger en un nombre très minimale d’itérations.
