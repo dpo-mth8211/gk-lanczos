@@ -155,7 +155,7 @@ run_experiment("well1850", "minimum_norm", ["craig", "lsqr", "lsmr"])
 
 Commenter ces résultats sur base de ce qui a été vu en classe.
 
-Les résultats montrent que les deux méthodes présentent un comportement prévisible et stable : l'erreur diminue de façon régulière à chaque itération, tandis que la norme de la solution augmente progressivement. Cette évolution monotone confirme la stabilité des algorithmes et leur capacité à converger graduellement vers la solution optimale.
+Les résultats montrent que les trois méthodes présentent généralement un comportement prévisible : l'erreur diminue à chaque itération, tandis que la norme de la solution augmente progressivement. Les méthodes CRAIG, LSQR et LSMR convergent vers des solutions de normes similaires pour well1033 et well1850, mais montrent des différences pour les problèmes illc. Le statut final varie selon la méthode et le problème traité, ce qui souligne l'importance du choix de l'algorithme en fonction des caractéristiques de la matrice.
 
 ### Méthodes basées sur Lanczos
 
