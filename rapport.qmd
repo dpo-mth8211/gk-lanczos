@@ -2,8 +2,8 @@
 title: "Rapport de laboratoire 4"
 subtitle: "MTH8211"
 author:
-  - name: Mon nom
-    email: mon.adresse@polymtl.ca
+  - name: Yasmine Amami
+    email: yasmine.amami@polymtl.ca
     affiliation:
       - name: Polytechnique Montréal
 format:
@@ -29,10 +29,14 @@ Pkg.activate("labo4_env")
 Pkg.add("Krylov")
 Pkg.add("SuiteSparseMatrixCollection")
 Pkg.add("MatrixMarket")
+Pkg.add("PrettyTables")
+Pkg.add("Plots")
 
-using LinearAlgebra
+using LinearAlgebra, SparseArrays
 using MatrixMarket
 using Krylov, SuiteSparseMatrixCollection
+using Plots
+using PrettyTables
 ```
 
 # Contexte
@@ -46,8 +50,13 @@ Sur base du code vu en laboratoire, écrire une fonction qui prend en entrée un
 
 ```{julia}
 function get_mm(matrix_name)
-  # A = ...
-  # b = ...
+  ssmc = ssmc_db()
+  pb = ssmc_matrices(ssmc, "", matrix_name)
+  fetch_ssmc(pb, format="MM")
+  pb_path = fetch_ssmc(pb, format="MM")
+  path_mtx = pb_path[1]
+  A = MatrixMarket.mmread(joinpath(path_mtx, matrix_name * ".mtx"))
+  b = MatrixMarket.mmread(joinpath(path_mtx, matrix_name * "_b.mtx"))
   return A, b
 end
 ```
@@ -68,32 +77,444 @@ Votre tableau doit montrer
 * le statuts final.
 
 ```{julia}
-# votre code ici
+function run_experiment(matrix_name::String, experiment_type::String, algos::Vector{String})
+    A, bmat = get_mm(matrix_name)
+    b = bmat[:, 1]
+    n, m = size(A)
+
+    if experiment_type == "least_squares"
+        println("Problème aux moindres carrés avec $algos pour $matrix_name")
+        x_sol = A \ b
+        err_map = Dict{String, Vector{Float64}}()
+        stats_map = Dict{String, Any}()
+        
+        # on applique pour chaque methode 
+        for algo in algos
+            err_map[algo] = Float64[]
+            solver = getproperty(Krylov, Symbol(algo))
+            callback = ws -> (push!(err_map[algo], norm(x_sol - ws.x)); false)
+            x, stats = solver(A, b; history=true, callback=callback)
+            stats_map[algo] = stats
+        end
+        # on extrait avec cette fonction les stats
+        function extract_stats(stats)
+            return vcat(stats.niter, stats.residuals[1], stats.residuals[end],
+                        stats.Aresiduals[1], stats.Aresiduals[end])
+        end
+
+        headers = [""]
+        col_names = ["# itérations", "‖r‖ (initial)", "‖r‖ (final)", "‖Aᵗr‖ (initial)", "‖Aᵗr‖ (final)"]
+        data = col_names
+
+        for algo in algos
+            push!(headers, algo)
+            data = hcat(data, extract_stats(stats_map[algo]))
+        end
+
+        # on fait l'affichage ici
+        pretty_table(data; header=headers, tf=tf_markdown)
+
+        # on affiche ici le statut
+        for algo in algos
+            println("Statut final pour $algo : ", string(stats_map[algo].status))
+        end
+
+        # on realise le trace ici 
+        gr()
+        first = true
+        for algo in algos
+            stats = stats_map[algo]
+            if first
+                plot(stats.residuals, label="‖r‖ $algo", lw=2, yaxis=:log, xlabel="Itération")
+                plot!(stats.Aresiduals, label="‖Aᵗr‖ $algo", lw=2)
+                plot!(err_map[algo], label="‖err‖ $algo", lw=2)
+                first = false
+            else
+                plot!(stats.residuals, label="‖r‖ $algo", lw=2)
+                plot!(stats.Aresiduals, label="‖Aᵗr‖ $algo", lw=2)
+                plot!(err_map[algo], label="‖err‖ $algo", lw=2)
+            end
+        end
+        savefig("LS_$matrix_name.pdf")
+
+    elseif experiment_type in ["saddle_primal", "saddle_adjoint"]
+        is_primal = experiment_type == "saddle_primal"
+        system_type = is_primal ? "primal" : "adjoint"
+        println("Système de point de selle ($system_type) avec $algos pour $matrix_name")
+
+        δ = 0.0
+        if is_primal
+            K = [sparse(I, n, n) A; A' -δ * I]
+            rhs = [b; zeros(m)]
+        else
+            K = [sparse(I, m, m) A'; A -δ * I]
+            rhs = [b[1:m]; zeros(n)]
+        end
+
+        Aresiduals = Dict{String, Vector{Float64}}()
+        stats_map = Dict{String, Any}()
+
+        for algo in algos
+            Aresiduals[algo] = Float64[]
+            solver = getproperty(Krylov, Symbol(algo))
+            callback = ws -> begin
+                x_block = is_primal ? ws.x[1:n] : ws.x[1:m]
+                res = is_primal ? A' * x_block : A * x_block
+                push!(Aresiduals[algo], norm(res))
+                return false
+            end
+            x, stats = solver(K, rhs; history=true, callback=callback)
+            stats_map[algo] = stats
+        end
+
+        function extract_stats(stats, algo)
+            if algo == "symmlq"
+                return vcat(stats.niter, stats.residuals[1], stats.residuals[end], "-", "-")
+            else
+                return vcat(stats.niter, stats.residuals[1], stats.residuals[end],
+                            stats.Aresiduals[1], stats.Aresiduals[end])
+            end
+        end
+
+        headers = [""]
+        col_names = ["# itérations", "‖r‖ (initial)", "‖r‖ (final)", "‖Aᵗr‖ (initial)", "‖Aᵗr‖ (final)"]
+        data = col_names
+
+        for algo in algos
+            push!(headers, algo)
+            data = hcat(data, extract_stats(stats_map[algo], algo))
+        end
+
+        pretty_table(data; header=headers, tf=tf_markdown)
+        for algo in algos
+            println("Statut final pour $algo : ", string(stats_map[algo].status))
+        end
+
+        gr()
+        first = true
+        for algo in algos
+            stats = stats_map[algo]
+            xaxis = 1:length(Aresiduals[algo])
+            if first
+                plot(stats.residuals, label="‖r‖ $algo", lw=2, yaxis=:log, xlabel="Itération")
+                plot!(xaxis, Aresiduals[algo], label="‖Ar LS‖ $algo", lw=2, linestyle=:dash)
+                first = false
+            else
+                plot!(stats.residuals, label="‖r‖ $algo", lw=2, linestyle=:dot)
+                plot!(xaxis, Aresiduals[algo], label="‖Ar LS‖ $algo", lw=2, linestyle=:solid)
+            end
+        end
+        savefig("AUG_$(system_type)_$matrix_name.pdf")
+
+    elseif experiment_type == "minimum_norm"
+        println("Problème de moindre norme avec $algos pour $matrix_name")
+
+        A = A'
+        b = b[1:size(A, 1)]
+        x_sol = lq(Matrix(A)) \ b
+
+        errors = Dict{String, Vector{Float64}}()
+        norms = Dict{String, Vector{Float64}}()
+        stats_map = Dict{String, Any}()
+
+        for algo in algos
+            errors[algo] = Float64[]
+            norms[algo] = Float64[]
+            solver = getproperty(Krylov, Symbol(algo))
+            callback = ws -> begin
+                push!(errors[algo], norm(x_sol - ws.x))
+                push!(norms[algo], norm(ws.x))
+                return false
+            end
+            if algo == "craig"
+                x, y, stats = solver(A, b; history=true, callback=callback)
+            else
+                x, stats = solver(A, b; history=true, callback=callback)
+            end
+            stats_map[algo] = stats
+        end
+
+        function extract_stats(algo)
+            return vcat(stats_map[algo].niter,
+                        errors[algo][1], errors[algo][end],
+                        norms[algo][1], norms[algo][end])
+        end
+
+        headers = [""]
+        col_names = ["# itérations", "‖err‖ (initial)", "‖err‖ (final)", "‖x‖ (initial)", "‖x‖ (final)"]
+        data = col_names
+
+        for algo in algos
+            push!(headers, algo)
+            data = hcat(data, extract_stats(algo))
+        end
+
+        pretty_table(data; header=headers, tf=tf_markdown)
+        for algo in algos
+            println("Statut final pour $algo : ", string(stats_map[algo].status))
+        end
+
+        gr()
+        first = true
+        for algo in algos
+            if first
+                plot(errors[algo], label="‖err‖ $algo", lw=2, yaxis=:log, xlabel="Itération")
+                plot!(norms[algo], label="‖x‖ $algo", lw=2)
+                first = false
+            else
+                plot!(errors[algo], label="‖err‖ $algo", lw=2)
+                plot!(norms[algo], label="‖x‖ $algo", lw=2)
+            end
+        end
+        savefig("MGK_$matrix_name.pdf")
+
+    else
+        error("Type d'expérience traitée ici inconnu : $experiment_type")
+    end
+end
+
 ```
 
 Tracer sur un graphe l'évolution du résidu aux moindres carrés, du résidu d'optimalité du problème aux moindres carrés, et de l'erreur en norme euclidienne.
 
 ```{julia}
-# votre code ici
+## illc1033
+run_experiment("illc1033", "least_squares", ["lsqr", "lsmr"])
+
+## illc1850
+run_experiment("illc1850", "least_squares", ["lsqr", "lsmr"])
+
+## well1033
+run_experiment("well1033", "least_squares", ["lsqr", "lsmr"])
+
+## well1850 
+run_experiment("well1850", "least_squares", ["lsqr", "lsmr"])
 ```
 
 Commenter ces résultats sur base de ce qui a été vu en classe.
+!!!! COMMENTAIRES
 
 ### Méthodes basées sur Lanczos
 
 Répéter la question précédente en appliquant MINRES, MINRES-QLP, MINARES et SYMMLQ sur le système de point de selle et produire un tableau semblable.
 
 ```{julia}
-# votre code ici
+function run_experiment(matrix_name::String, experiment_type::String, algos::Vector{String})
+    A, bmat = get_mm(matrix_name)
+    b = bmat[:, 1]
+    n, m = size(A)
+
+    if experiment_type == "least_squares"
+        println("Problème aux moindres carrés avec $algos pour $matrix_name")
+        x_sol = A \ b
+        err_map = Dict{String, Vector{Float64}}()
+        stats_map = Dict{String, Any}()
+        
+        # on applique pour chaque methode 
+        for algo in algos
+            err_map[algo] = Float64[]
+            solver = getproperty(Krylov, Symbol(algo))
+            callback = ws -> (push!(err_map[algo], norm(x_sol - ws.x)); false)
+            x, stats = solver(A, b; history=true, callback=callback)
+            stats_map[algo] = stats
+        end
+        # on extrait avec cette fonction les stats
+        function extract_stats(stats)
+            return vcat(stats.niter, stats.residuals[1], stats.residuals[end],
+                        stats.Aresiduals[1], stats.Aresiduals[end])
+        end
+
+        headers = [""]
+        col_names = ["# itérations", "‖r‖ (initial)", "‖r‖ (final)", "‖Aᵗr‖ (initial)", "‖Aᵗr‖ (final)"]
+        data = col_names
+
+        for algo in algos
+            push!(headers, algo)
+            data = hcat(data, extract_stats(stats_map[algo]))
+        end
+
+        # on fait l'affichage ici
+        pretty_table(data; header=headers, tf=tf_markdown)
+
+        # on affiche ici le statut
+        for algo in algos
+            println("Statut final pour $algo : ", string(stats_map[algo].status))
+        end
+
+        # on realise le trace ici 
+        gr()
+        first = true
+        for algo in algos
+            stats = stats_map[algo]
+            if first
+                plot(stats.residuals, label="‖r‖ $algo", lw=2, yaxis=:log, xlabel="Itération")
+                plot!(stats.Aresiduals, label="‖Aᵗr‖ $algo", lw=2)
+                plot!(err_map[algo], label="‖err‖ $algo", lw=2)
+                first = false
+            else
+                plot!(stats.residuals, label="‖r‖ $algo", lw=2)
+                plot!(stats.Aresiduals, label="‖Aᵗr‖ $algo", lw=2)
+                plot!(err_map[algo], label="‖err‖ $algo", lw=2)
+            end
+        end
+        savefig("LS_$matrix_name.pdf")
+
+    elseif experiment_type in ["saddle_primal", "saddle_adjoint"]
+        is_primal = experiment_type == "saddle_primal"
+        system_type = is_primal ? "primal" : "adjoint"
+        println("Système de point de selle ($system_type) avec $algos pour $matrix_name")
+
+        δ = 0.0
+        if is_primal
+            K = [sparse(I, n, n) A; A' -δ * I]
+            rhs = [b; zeros(m)]
+        else
+            K = [sparse(I, m, m) A'; A -δ * I]
+            rhs = [b[1:m]; zeros(n)]
+        end
+
+        Aresiduals = Dict{String, Vector{Float64}}()
+        stats_map = Dict{String, Any}()
+
+        for algo in algos
+            Aresiduals[algo] = Float64[]
+            solver = getproperty(Krylov, Symbol(algo))
+            callback = ws -> begin
+                x_block = is_primal ? ws.x[1:n] : ws.x[1:m]
+                res = is_primal ? A' * x_block : A * x_block
+                push!(Aresiduals[algo], norm(res))
+                return false
+            end
+            x, stats = solver(K, rhs; history=true, callback=callback)
+            stats_map[algo] = stats
+        end
+
+        function extract_stats(stats, algo)
+            if algo == "symmlq"
+                return vcat(stats.niter, stats.residuals[1], stats.residuals[end], "-", "-")
+            else
+                return vcat(stats.niter, stats.residuals[1], stats.residuals[end],
+                            stats.Aresiduals[1], stats.Aresiduals[end])
+            end
+        end
+
+        headers = [""]
+        col_names = ["# itérations", "‖r‖ (initial)", "‖r‖ (final)", "‖Aᵗr‖ (initial)", "‖Aᵗr‖ (final)"]
+        data = col_names
+
+        for algo in algos
+            push!(headers, algo)
+            data = hcat(data, extract_stats(stats_map[algo], algo))
+        end
+
+        pretty_table(data; header=headers, tf=tf_markdown)
+        for algo in algos
+            println("Statut final pour $algo : ", string(stats_map[algo].status))
+        end
+
+        gr()
+        first = true
+        for algo in algos
+            stats = stats_map[algo]
+            xaxis = 1:length(Aresiduals[algo])
+            if first
+                plot(stats.residuals, label="‖r‖ $algo", lw=2, yaxis=:log, xlabel="Itération")
+                plot!(xaxis, Aresiduals[algo], label="‖Ar LS‖ $algo", lw=2, linestyle=:dash)
+                first = false
+            else
+                plot!(stats.residuals, label="‖r‖ $algo", lw=2, linestyle=:dot)
+                plot!(xaxis, Aresiduals[algo], label="‖Ar LS‖ $algo", lw=2, linestyle=:solid)
+            end
+        end
+        savefig("AUG_$(system_type)_$matrix_name.pdf")
+
+    elseif experiment_type == "minimum_norm"
+        println("Problème de moindre norme avec $algos pour $matrix_name")
+
+        A = A'
+        b = b[1:size(A, 1)]
+        x_sol = lq(Matrix(A)) \ b
+
+        errors = Dict{String, Vector{Float64}}()
+        norms = Dict{String, Vector{Float64}}()
+        stats_map = Dict{String, Any}()
+
+        for algo in algos
+            errors[algo] = Float64[]
+            norms[algo] = Float64[]
+            solver = getproperty(Krylov, Symbol(algo))
+            callback = ws -> begin
+                push!(errors[algo], norm(x_sol - ws.x))
+                push!(norms[algo], norm(ws.x))
+                return false
+            end
+            if algo == "craig"
+                x, y, stats = solver(A, b; history=true, callback=callback)
+            else
+                x, stats = solver(A, b; history=true, callback=callback)
+            end
+            stats_map[algo] = stats
+        end
+
+        function extract_stats(algo)
+            return vcat(stats_map[algo].niter,
+                        errors[algo][1], errors[algo][end],
+                        norms[algo][1], norms[algo][end])
+        end
+
+        headers = [""]
+        col_names = ["# itérations", "‖err‖ (initial)", "‖err‖ (final)", "‖x‖ (initial)", "‖x‖ (final)"]
+        data = col_names
+
+        for algo in algos
+            push!(headers, algo)
+            data = hcat(data, extract_stats(algo))
+        end
+
+        pretty_table(data; header=headers, tf=tf_markdown)
+        for algo in algos
+            println("Statut final pour $algo : ", string(stats_map[algo].status))
+        end
+
+        gr()
+        first = true
+        for algo in algos
+            if first
+                plot(errors[algo], label="‖err‖ $algo", lw=2, yaxis=:log, xlabel="Itération")
+                plot!(norms[algo], label="‖x‖ $algo", lw=2)
+                first = false
+            else
+                plot!(errors[algo], label="‖err‖ $algo", lw=2)
+                plot!(norms[algo], label="‖x‖ $algo", lw=2)
+            end
+        end
+        savefig("MLanczos_$matrix_name.pdf")
+
+    else
+        error("Type d'expérience traitée ici inconnu : $experiment_type")
+    end
+end
+
 ```
 
 Tracer sur un graphe l'évolution du résidu d'optimalité du problème aux moindres carrés et du résidu du système de point de selle.
 
 ```{julia}
-# votre code ici
+## illc1033
+run_experiment("illc1033", "saddle_primal", ["minres", "minres_qlp", "minares", "symmlq"])
+
+## illc1850
+run_experiment("illc1850", "saddle_primal", ["minres", "minres_qlp", "minares", "symmlq"])
+
+## well1033
+run_experiment("well1033", "saddle_primal", ["minres", "minres_qlp", "minares", "symmlq"])
+
+## well1850 
+run_experiment("well1850", "saddle_primal", ["minres", "minres_qlp", "minares", "symmlq"])
 ```
 
 Commenter ces résultats sur base de ce qui a été vu en classe.
+!!! COMMENTAIRES
 
 ## Problèmes de moindre norme
 
@@ -106,29 +527,443 @@ Votre tableau doit montrer
 * la norme de l'erreur intiale et finale ;
 * le statuts final.
 
+```{julia}
+function run_experiment(matrix_name::String, experiment_type::String, algos::Vector{String})
+    A, bmat = get_mm(matrix_name)
+    b = bmat[:, 1]
+    n, m = size(A)
+
+    if experiment_type == "least_squares"
+        println("Problème aux moindres carrés avec $algos pour $matrix_name")
+        x_sol = A \ b
+        err_map = Dict{String, Vector{Float64}}()
+        stats_map = Dict{String, Any}()
+        
+        # on applique pour chaque methode 
+        for algo in algos
+            err_map[algo] = Float64[]
+            solver = getproperty(Krylov, Symbol(algo))
+            callback = ws -> (push!(err_map[algo], norm(x_sol - ws.x)); false)
+            x, stats = solver(A, b; history=true, callback=callback)
+            stats_map[algo] = stats
+        end
+        # on extrait avec cette fonction les stats
+        function extract_stats(stats)
+            return vcat(stats.niter, stats.residuals[1], stats.residuals[end],
+                        stats.Aresiduals[1], stats.Aresiduals[end])
+        end
+
+        headers = [""]
+        col_names = ["# itérations", "‖r‖ (initial)", "‖r‖ (final)", "‖Aᵗr‖ (initial)", "‖Aᵗr‖ (final)"]
+        data = col_names
+
+        for algo in algos
+            push!(headers, algo)
+            data = hcat(data, extract_stats(stats_map[algo]))
+        end
+
+        # on fait l'affichage ici
+        pretty_table(data; header=headers, tf=tf_markdown)
+
+        # on affiche ici le statut
+        for algo in algos
+            println("Statut final pour $algo : ", string(stats_map[algo].status))
+        end
+
+        # on realise le trace ici 
+        gr()
+        first = true
+        for algo in algos
+            stats = stats_map[algo]
+            if first
+                plot(stats.residuals, label="‖r‖ $algo", lw=2, yaxis=:log, xlabel="Itération")
+                plot!(stats.Aresiduals, label="‖Aᵗr‖ $algo", lw=2)
+                plot!(err_map[algo], label="‖err‖ $algo", lw=2)
+                first = false
+            else
+                plot!(stats.residuals, label="‖r‖ $algo", lw=2)
+                plot!(stats.Aresiduals, label="‖Aᵗr‖ $algo", lw=2)
+                plot!(err_map[algo], label="‖err‖ $algo", lw=2)
+            end
+        end
+        savefig("LS_$matrix_name.pdf")
+
+    elseif experiment_type in ["saddle_primal", "saddle_adjoint"]
+        is_primal = experiment_type == "saddle_primal"
+        system_type = is_primal ? "primal" : "adjoint"
+        println("Système de point de selle ($system_type) avec $algos pour $matrix_name")
+
+        δ = 0.0
+        if is_primal
+            K = [sparse(I, n, n) A; A' -δ * I]
+            rhs = [b; zeros(m)]
+        else
+            K = [sparse(I, m, m) A'; A -δ * I]
+            rhs = [b[1:m]; zeros(n)]
+        end
+
+        Aresiduals = Dict{String, Vector{Float64}}()
+        stats_map = Dict{String, Any}()
+
+        for algo in algos
+            Aresiduals[algo] = Float64[]
+            solver = getproperty(Krylov, Symbol(algo))
+            callback = ws -> begin
+                x_block = is_primal ? ws.x[1:n] : ws.x[1:m]
+                res = is_primal ? A' * x_block : A * x_block
+                push!(Aresiduals[algo], norm(res))
+                return false
+            end
+            x, stats = solver(K, rhs; history=true, callback=callback)
+            stats_map[algo] = stats
+        end
+
+        function extract_stats(stats, algo)
+            if algo == "symmlq"
+                return vcat(stats.niter, stats.residuals[1], stats.residuals[end], "-", "-")
+            else
+                return vcat(stats.niter, stats.residuals[1], stats.residuals[end],
+                            stats.Aresiduals[1], stats.Aresiduals[end])
+            end
+        end
+
+        headers = [""]
+        col_names = ["# itérations", "‖r‖ (initial)", "‖r‖ (final)", "‖Aᵗr‖ (initial)", "‖Aᵗr‖ (final)"]
+        data = col_names
+
+        for algo in algos
+            push!(headers, algo)
+            data = hcat(data, extract_stats(stats_map[algo], algo))
+        end
+
+        pretty_table(data; header=headers, tf=tf_markdown)
+        for algo in algos
+            println("Statut final pour $algo : ", string(stats_map[algo].status))
+        end
+
+        gr()
+        first = true
+        for algo in algos
+            stats = stats_map[algo]
+            xaxis = 1:length(Aresiduals[algo])
+            if first
+                plot(stats.residuals, label="‖r‖ $algo", lw=2, yaxis=:log, xlabel="Itération")
+                plot!(xaxis, Aresiduals[algo], label="‖Ar LS‖ $algo", lw=2, linestyle=:dash)
+                first = false
+            else
+                plot!(stats.residuals, label="‖r‖ $algo", lw=2, linestyle=:dot)
+                plot!(xaxis, Aresiduals[algo], label="‖Ar LS‖ $algo", lw=2, linestyle=:solid)
+            end
+        end
+        savefig("AUG_$(system_type)_$matrix_name.pdf")
+
+    elseif experiment_type == "minimum_norm"
+        println("Problème de moindre norme avec $algos pour $matrix_name")
+
+        A = A'
+        b = b[1:size(A, 1)]
+        x_sol = lq(Matrix(A)) \ b
+
+        errors = Dict{String, Vector{Float64}}()
+        norms = Dict{String, Vector{Float64}}()
+        stats_map = Dict{String, Any}()
+
+        for algo in algos
+            errors[algo] = Float64[]
+            norms[algo] = Float64[]
+            solver = getproperty(Krylov, Symbol(algo))
+            callback = ws -> begin
+                push!(errors[algo], norm(x_sol - ws.x))
+                push!(norms[algo], norm(ws.x))
+                return false
+            end
+            if algo == "craig"
+                x, y, stats = solver(A, b; history=true, callback=callback)
+            else
+                x, stats = solver(A, b; history=true, callback=callback)
+            end
+            stats_map[algo] = stats
+        end
+
+        function extract_stats(algo)
+            return vcat(stats_map[algo].niter,
+                        errors[algo][1], errors[algo][end],
+                        norms[algo][1], norms[algo][end])
+        end
+
+        headers = [""]
+        col_names = ["# itérations", "‖err‖ (initial)", "‖err‖ (final)", "‖x‖ (initial)", "‖x‖ (final)"]
+        data = col_names
+
+        for algo in algos
+            push!(headers, algo)
+            data = hcat(data, extract_stats(algo))
+        end
+
+        pretty_table(data; header=headers, tf=tf_markdown)
+        for algo in algos
+            println("Statut final pour $algo : ", string(stats_map[algo].status))
+        end
+
+        gr()
+        first = true
+        for algo in algos
+            if first
+                plot(errors[algo], label="‖err‖ $algo", lw=2, yaxis=:log, xlabel="Itération")
+                plot!(norms[algo], label="‖x‖ $algo", lw=2)
+                first = false
+            else
+                plot!(errors[algo], label="‖err‖ $algo", lw=2)
+                plot!(norms[algo], label="‖x‖ $algo", lw=2)
+            end
+        end
+        savefig("MoindreNorme_$matrix_name.pdf")
+
+    else
+        error("Type d'expérience traitée ici inconnu : $experiment_type")
+    end
+end
+```
+
 Les itérés générés par ces trois méthodes vérifient-ils $A x_k = b$ à chaque itération ?
 Expliquer.
 
 Tracer sur un graphe l'évolution de la norme de la solution et de l'erreur en norme euclidienne.
 
 ```{julia}
-# votre code ici
+## illc1033
+run_experiment("illc1033", "minimum_norm", ["craig", "lsqr", "lsmr"])
+
+## illc1850
+run_experiment("illc1850", "minimum_norm", ["craig", "lsqr", "lsmr"])
+
+## well1033
+run_experiment("well1033", "minimum_norm", ["craig", "lsqr", "lsmr"])
+
+## well1850 
+run_experiment("well1850", "minimum_norm", ["craig", "lsqr", "lsmr"])
 ```
 
 Commenter ces résultats sur base de ce qui a été vu en classe.
+!!! COMMENTAIRES
 
 ### Méthodes basées sur Lanczos
 
 Répéter la question précédente en appliquant MINRES, MINRES-QLP, MINARES et SYMMLQ sur le système de point de selle et produire un tableau semblable.
 
 ```{julia}
-# votre code ici
+function run_experiment(matrix_name::String, experiment_type::String, algos::Vector{String})
+    A, bmat = get_mm(matrix_name)
+    b = bmat[:, 1]
+    n, m = size(A)
+
+    if experiment_type == "least_squares"
+        println("Problème aux moindres carrés avec $algos pour $matrix_name")
+        x_sol = A \ b
+        err_map = Dict{String, Vector{Float64}}()
+        stats_map = Dict{String, Any}()
+        
+        # on applique pour chaque methode 
+        for algo in algos
+            err_map[algo] = Float64[]
+            solver = getproperty(Krylov, Symbol(algo))
+            callback = ws -> (push!(err_map[algo], norm(x_sol - ws.x)); false)
+            x, stats = solver(A, b; history=true, callback=callback)
+            stats_map[algo] = stats
+        end
+        # on extrait avec cette fonction les stats
+        function extract_stats(stats)
+            return vcat(stats.niter, stats.residuals[1], stats.residuals[end],
+                        stats.Aresiduals[1], stats.Aresiduals[end])
+        end
+
+        headers = [""]
+        col_names = ["# itérations", "‖r‖ (initial)", "‖r‖ (final)", "‖Aᵗr‖ (initial)", "‖Aᵗr‖ (final)"]
+        data = col_names
+
+        for algo in algos
+            push!(headers, algo)
+            data = hcat(data, extract_stats(stats_map[algo]))
+        end
+
+        # on fait l'affichage ici
+        pretty_table(data; header=headers, tf=tf_markdown)
+
+        # on affiche ici le statut
+        for algo in algos
+            println("Statut final pour $algo : ", string(stats_map[algo].status))
+        end
+
+        # on realise le trace ici 
+        gr()
+        first = true
+        for algo in algos
+            stats = stats_map[algo]
+            if first
+                plot(stats.residuals, label="‖r‖ $algo", lw=2, yaxis=:log, xlabel="Itération")
+                plot!(stats.Aresiduals, label="‖Aᵗr‖ $algo", lw=2)
+                plot!(err_map[algo], label="‖err‖ $algo", lw=2)
+                first = false
+            else
+                plot!(stats.residuals, label="‖r‖ $algo", lw=2)
+                plot!(stats.Aresiduals, label="‖Aᵗr‖ $algo", lw=2)
+                plot!(err_map[algo], label="‖err‖ $algo", lw=2)
+            end
+        end
+        savefig("LS_$matrix_name.pdf")
+
+    elseif experiment_type in ["saddle_primal", "saddle_adjoint"]
+        is_primal = experiment_type == "saddle_primal"
+        system_type = is_primal ? "primal" : "adjoint"
+        println("Système de point de selle ($system_type) avec $algos pour $matrix_name")
+
+        δ = 0.0
+        if is_primal
+            K = [sparse(I, n, n) A; A' -δ * I]
+            rhs = [b; zeros(m)]
+        else
+            K = [sparse(I, m, m) A'; A -δ * I]
+            rhs = [b[1:m]; zeros(n)]
+        end
+
+        Aresiduals = Dict{String, Vector{Float64}}()
+        stats_map = Dict{String, Any}()
+
+        for algo in algos
+            Aresiduals[algo] = Float64[]
+            solver = getproperty(Krylov, Symbol(algo))
+            callback = ws -> begin
+                x_block = is_primal ? ws.x[1:n] : ws.x[1:m]
+                res = is_primal ? A' * x_block : A * x_block
+                push!(Aresiduals[algo], norm(res))
+                return false
+            end
+            x, stats = solver(K, rhs; history=true, callback=callback)
+            stats_map[algo] = stats
+        end
+
+        function extract_stats(stats, algo)
+            if algo == "symmlq"
+                return vcat(stats.niter, stats.residuals[1], stats.residuals[end], "-", "-")
+            else
+                return vcat(stats.niter, stats.residuals[1], stats.residuals[end],
+                            stats.Aresiduals[1], stats.Aresiduals[end])
+            end
+        end
+
+        headers = [""]
+        col_names = ["# itérations", "‖r‖ (initial)", "‖r‖ (final)", "‖Aᵗr‖ (initial)", "‖Aᵗr‖ (final)"]
+        data = col_names
+
+        for algo in algos
+            push!(headers, algo)
+            data = hcat(data, extract_stats(stats_map[algo], algo))
+        end
+
+        pretty_table(data; header=headers, tf=tf_markdown)
+        for algo in algos
+            println("Statut final pour $algo : ", string(stats_map[algo].status))
+        end
+
+        gr()
+        first = true
+        for algo in algos
+            stats = stats_map[algo]
+            xaxis = 1:length(Aresiduals[algo])
+            if first
+                plot(stats.residuals, label="‖r‖ $algo", lw=2, yaxis=:log, xlabel="Itération")
+                plot!(xaxis, Aresiduals[algo], label="‖Ar LS‖ $algo", lw=2, linestyle=:dash)
+                first = false
+            else
+                plot!(stats.residuals, label="‖r‖ $algo", lw=2, linestyle=:dot)
+                plot!(xaxis, Aresiduals[algo], label="‖Ar LS‖ $algo", lw=2, linestyle=:solid)
+            end
+        end
+        savefig("AUG_$(system_type)_$matrix_name.pdf")
+
+    elseif experiment_type == "minimum_norm"
+        println("Problème de moindre norme avec $algos pour $matrix_name")
+
+        A = A'
+        b = b[1:size(A, 1)]
+        x_sol = lq(Matrix(A)) \ b
+
+        errors = Dict{String, Vector{Float64}}()
+        norms = Dict{String, Vector{Float64}}()
+        stats_map = Dict{String, Any}()
+
+        for algo in algos
+            errors[algo] = Float64[]
+            norms[algo] = Float64[]
+            solver = getproperty(Krylov, Symbol(algo))
+            callback = ws -> begin
+                push!(errors[algo], norm(x_sol - ws.x))
+                push!(norms[algo], norm(ws.x))
+                return false
+            end
+            if algo == "craig"
+                x, y, stats = solver(A, b; history=true, callback=callback)
+            else
+                x, stats = solver(A, b; history=true, callback=callback)
+            end
+            stats_map[algo] = stats
+        end
+
+        function extract_stats(algo)
+            return vcat(stats_map[algo].niter,
+                        errors[algo][1], errors[algo][end],
+                        norms[algo][1], norms[algo][end])
+        end
+
+        headers = [""]
+        col_names = ["# itérations", "‖err‖ (initial)", "‖err‖ (final)", "‖x‖ (initial)", "‖x‖ (final)"]
+        data = col_names
+
+        for algo in algos
+            push!(headers, algo)
+            data = hcat(data, extract_stats(algo))
+        end
+
+        pretty_table(data; header=headers, tf=tf_markdown)
+        for algo in algos
+            println("Statut final pour $algo : ", string(stats_map[algo].status))
+        end
+
+        gr()
+        first = true
+        for algo in algos
+            if first
+                plot(errors[algo], label="‖err‖ $algo", lw=2, yaxis=:log, xlabel="Itération")
+                plot!(norms[algo], label="‖x‖ $algo", lw=2)
+                first = false
+            else
+                plot!(errors[algo], label="‖err‖ $algo", lw=2)
+                plot!(norms[algo], label="‖x‖ $algo", lw=2)
+            end
+        end
+        savefig("MR_$matrix_name.pdf")
+
+    else
+        error("Type d'expérience traitée ici inconnu : $experiment_type")
+    end
+end
+
 ```
 
 Tracer sur un graphe l'évolution du résidu d'optimalité du problème aux moindres carrés et du résidu du système de point de selle.
 
 ```{julia}
-# votre code ici
+## illc1033
+run_experiment("illc1033", "saddle_adjoint", ["minres", "minres_qlp", "minares", "symmlq"])
+
+## illc1850
+run_experiment("illc1850", "saddle_adjoint", ["minres", "minres_qlp", "minares", "symmlq"])
+
+## well1033
+run_experiment("well1033", "saddle_adjoint", ["minres", "minres_qlp", "minares", "symmlq"])
+
+## well1850 
+run_experiment("well1850", "saddle_adjoint", ["minres", "minres_qlp", "minares", "symmlq"])
 ```
 
 Commenter ces résultats sur base de ce qui a été vu en classe.
