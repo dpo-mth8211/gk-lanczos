@@ -97,16 +97,16 @@ Tracer sur un graphe l'évolution du résidu aux moindres carrés, du résidu d'
 ```
 
 ```{julia}
-plot(p1)
+plot(p1); savefig("gk1.pdf")
 ```
 ```{julia}
-plot(p2)
+plot(p2); savefig("gk2.pdf")
 ```
 ```{julia}
-plot(p3)
+plot(p3); savefig("gk3.pdf")
 ```
 ```{julia}
-plot(p4)
+plot(p4); savefig("gk4.pdf")
 ```
 
 Commenter ces résultats sur base de ce qui a été vu en classe.
@@ -137,16 +137,16 @@ Tracer sur un graphe l'évolution du résidu d'optimalité du problème aux moin
 ```
 
 ```{julia}
-plot(p1)
+plot(p1); savefig("lan1.pdf")
 ```
 ```{julia}
-plot(p2)
+plot(p2); savefig("lan2.pdf")
 ```
 ```{julia}
-plot(p3)
+plot(p3); savefig("lan3.pdf")
 ```
 ```{julia}
-plot(p4)
+plot(p4); savefig("lan4.pdf")
 ```
 
 Commenter ces résultats sur base de ce qui a été vu en classe.
@@ -179,16 +179,16 @@ Tracer sur un graphe l'évolution de la norme de la solution et de l'erreur en n
 {{< include ln_plot_gk.jl >}}
 ```
 ```{julia}
-plot(p1)
+plot(p1); savefig("ln1.pdf")
 ```
 ```{julia}
-plot(p2)
+plot(p2); savefig("ln2.pdf")
 ```
 ```{julia}
-plot(p3)
+plot(p3); savefig("ln3.pdf")
 ```
 ```{julia}
-plot(p4)
+plot(p4); savefig("ln4.pdf")
 ```
 
 Commenter ces résultats sur base de ce qui a été vu en classe.
@@ -211,16 +211,16 @@ Tracer sur un graphe l'évolution du résidu d'optimalité du problème aux moin
 {{< include ln_plot_lz.jl >}}
 ```
 ```{julia}
-plot(p1)
+plot(p1); savefig("ares1.pdf")
 ```
 ```{julia}
-plot(p2)
+plot(p2); savefig("ares2.pdf")
 ```
 ```{julia}
-plot(p3)
+plot(p3); savefig("ares3.pdf")
 ```
 ```{julia}
-plot(p4)
+plot(p4); savefig("ares4.pdf")
 ```
 
 Commenter ces résultats sur base de ce qui a été vu en classe.
