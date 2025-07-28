@@ -19,6 +19,8 @@ jobs:
           version: "1"
       - name: Install Jupyter
         run: python3 -m pip install jupyter
+      - name: Install librsvg
+        run: sudo apt-get install librsvg2-bin
       - name: Setup Quarto
         uses: quarto-dev/quarto-actions/setup@v2
         env:
