@@ -147,7 +147,6 @@ for (i, pbname) in enumerate(problems)
     plot!(1:length(histo_lsmr.Aresiduals), histo_lsmr.Aresiduals; label="ARes-LSMR", linewidth=2, color=:red, linestyle=:dash)
     plot!(1:length(norms), norms; label="Error-LSMR", linewidth=2, color=:black, linestyle=:dash)
 
-    savefig("ls_$(pbname).pdf")
 end
 ```
 
@@ -250,7 +249,6 @@ for (i, pbname) in enumerate(problems)
             plot!(1:length(aresiduals), aresiduals; label="ARes-SYMMLQ", linewidth=2, color=:magenta)
         end
     end
-    savefig("lan_$(pbname).pdf")
 end
 ```
 
@@ -365,7 +363,6 @@ for (i, pbname) in enumerate(problems)
             plot!(1:length(error), error; label="error-SYMMLQ", linewidth=2, color=:magenta)
         end
     end
-    savefig("error_$(pbname).pdf")
 end
 ```
 
@@ -462,7 +459,6 @@ for pbname in problems
         plot!(1:length(aresiduals), aresiduals;
               label="ARes-$method", color=color, linestyle=:dash, linewidth=2)
     end
-    savefig("ares_$(pbname).pdf")
 end
 
 ```
