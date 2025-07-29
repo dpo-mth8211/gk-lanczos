@@ -2,8 +2,8 @@
 title: "Rapport de laboratoire 4"
 subtitle: "MTH8211"
 author:
-  - name: Mon nom
-    email: mon.adresse@polymtl.ca
+  - name: Ulrich Baron-Fournier
+    email: ulrich.baron-fournier@polymtl.ca
     affiliation:
       - name: Polytechnique Montréal
 format:
@@ -29,10 +29,13 @@ Pkg.activate("labo4_env")
 Pkg.add("Krylov")
 Pkg.add("SuiteSparseMatrixCollection")
 Pkg.add("MatrixMarket")
-
+Pkg.add("PrettyTables")
+Pkg.add("Plots")
+using PrettyTables
 using LinearAlgebra
 using MatrixMarket
 using Krylov, SuiteSparseMatrixCollection
+using Plots
 ```
 
 # Contexte
@@ -46,10 +49,20 @@ Sur base du code vu en laboratoire, écrire une fonction qui prend en entrée un
 
 ```{julia}
 function get_mm(matrix_name)
-  # A = ...
-  # b = ...
+        ssmc = ssmc_db()
+        pb = ssmc_matrices(ssmc, "", matrix_name)
+        fetch_ssmc(pb, format="MM")
+        pb_path = fetch_ssmc(pb, format="MM")
+        path_mtx = pb_path[1]
+        A = MatrixMarket.mmread(joinpath(path_mtx, matrix_name * ".mtx"));
+        b = MatrixMarket.mmread(joinpath(path_mtx, matrix_name * "_b.mtx"))[:]
   return A, b
 end
+```
+
+
+```{julia}
+solve_QR(A, b) = qr(A)\ b
 ```
 
 Utiliser cette fonction pour télécharger les problèmes aux moindres carrés `illc1033`, `illc1850`, `well1033`, `well1850` de la [SuiteSparse Matrix Collection](https://sparse.tamu.edu), y compris les membres de droite.
@@ -68,32 +81,182 @@ Votre tableau doit montrer
 * le statuts final.
 
 ```{julia}
-# votre code ici
+problems = ["illc1033", "illc1850", "well1033", "well1850"]
+results = Matrix{Any}(undef, 0, 8)
+
+for name in problems
+    A, b = get_mm(name)
+    
+    for method in ["lsqr", "lsmr"]
+        if method == "lsqr"
+            res, histo = Krylov.lsqr(A, b, history=true)
+        else
+            res, histo = Krylov.lsmr(A, b, history=true)
+        end
+        niter = histo.niter
+        res0 = histo.residuals[1]
+        resf = histo.residuals[end]
+        Ares0 = histo.Aresiduals[1]
+        Aresf = histo.Aresiduals[end]
+        status = histo.status
+        results = vcat(results, [name method niter res0 resf Ares0 Aresf status])
+    end
+end
+header = ["problem", "method", "niter", "Res initial", "Res final", "ARes initial", "ARes final", "Status"]
+pretty_table(results, header = header)
+
 ```
 
 Tracer sur un graphe l'évolution du résidu aux moindres carrés, du résidu d'optimalité du problème aux moindres carrés, et de l'erreur en norme euclidienne.
 
+En mettant history=true dans l'appel des fonction lsqr et lsmr, on obtient directement les résidus pour chaque itération. Pour avoir l'erreur en norme euclidienne à chaque itération, on utilise le callback comme en laboratoire.
+
 ```{julia}
-# votre code ici
+function custom_stopping_condition(workspace::KrylovWorkspace, A, b, x_qr,norms)
+  push!(norms, norm(workspace.x - x_qr))
+  return false
+end
+```
+
+Ainsi, cela permet de retenir l'erreur en norme euclidienne sur la solution à chaque itération. La solution exacte utilisée pour déterminer l'erreur est la solution obtenue par:
+
+```{julia}
+solve_QR(A, b) = qr(A)\ b
+```
+
+```{julia}
+
+for (i, pbname) in enumerate(problems)
+    A, b = get_mm(pbname)
+    x_qr = solve_QR(A, b)
+    norms = Float64[]  
+    lsqmr_callback(workspace) = custom_stopping_condition(workspace, A, b, x_qr,norms)
+    res_lsqr, histo_lsqr = Krylov.lsqr(A, b, history=true, callback=lsqmr_callback)
+    
+    plt = plot(1:length(histo_lsqr.residuals), histo_lsqr.residuals;
+        label="Res-LSQR",
+        xlabel="Itérations", ylabel="Norme", title="Problème: $pbname",
+        yscale=:log10, legend=:topright, linewidth=2, color=:blue)
+    plot!(1:length(histo_lsqr.Aresiduals), histo_lsqr.Aresiduals; label="ARes-LSQR", linewidth=2, color=:red)
+    plot!(1:length(norms), norms; label="Error-LSQR", linewidth=2, color=:black)
+
+    norms = Float64[]
+    res_lsmr, histo_lsmr = Krylov.lsmr(A, b, history=true, callback=lsqmr_callback)
+
+    plot!(1:length(histo_lsmr.residuals), histo_lsmr.residuals; label="Res-LSMR", linewidth=2, color=:blue, linestyle=:dash)
+    plot!(1:length(histo_lsmr.Aresiduals), histo_lsmr.Aresiduals; label="ARes-LSMR", linewidth=2, color=:red, linestyle=:dash)
+    plot!(1:length(norms), norms; label="Error-LSMR", linewidth=2, color=:black, linestyle=:dash)
+
+    display(plt)
+end
 ```
 
 Commenter ces résultats sur base de ce qui a été vu en classe.
+
+On peut voir que toutes les quantités sont décroissantes et monotones sauf pour le réssidu doptimalité de la méthode LSMR.
 
 ### Méthodes basées sur Lanczos
 
 Répéter la question précédente en appliquant MINRES, MINRES-QLP, MINARES et SYMMLQ sur le système de point de selle et produire un tableau semblable.
 
+Premièrement on doit augmenter le système afin d'avoir un système symétrique indéfini. La fonction suivante sert à construire le système.
 ```{julia}
-# votre code ici
+function build_system(A, b)
+    m, n = size(A)
+    K = [Matrix{eltype(A)}(I, m, m) A; A' zeros(eltype(A), n, n)]
+    rhs = [b; zeros(n)]
+    return K, rhs
+end
+```
+
+Ensuite, de la même manière que précédemment, on peut construire le tableau suivant:
+
+```{julia}
+lanczos_methods = ["minres", "minres_qlp", "minares", "symmlq"]
+results = Matrix{Any}(undef, 0, 8)
+
+for name in problems
+    A, b = get_mm(name)
+    M, rhs = build_system(A, b)
+    histo = []
+    res = []
+    for method in lanczos_methods
+        if method == "minres"
+            res, histo = Krylov.minres(M, rhs, history=true)
+        elseif method == "minresqlp"
+            res, histo = Krylov.minresqlp(M, rhs, history=true)
+        elseif method == "minares"
+            res, histo = Krylov.minares(M, rhs, history=true)
+        elseif method == "symmlq"
+            res, histo = Krylov.symmlq(M, rhs, history=true)
+        end
+        niter = histo.niter
+        res0 = histo.residuals[1]
+        resf = histo.residuals[end]
+        x0 = zeros(size(res[end - size(A,2) + 1:end]))
+        Ares0 = norm(A' * (b - A * x0))
+        Aresf = norm(A' * (b - A * res[end - size(A,2) + 1:end]))
+        status = histo.status
+        results = vcat(results, [name method niter res0 resf Ares0 Aresf status])
+    end
+end
+
+header = ["problem", "method", "niter", "Res initial", "Res final", "ARes initial", "ARes final", "Status"]
+pretty_table(results, header=header)
 ```
 
 Tracer sur un graphe l'évolution du résidu d'optimalité du problème aux moindres carrés et du résidu du système de point de selle.
 
 ```{julia}
-# votre code ici
+methods = ["minres", "minres_qpl", "minares", "symmlq"]
+
+for (i, pbname) in enumerate(problems)
+    println("Problème: $pbname")
+
+    A, b = get_mm(pbname)
+    x_qr = solve_QR(A, b)
+    n = size(A, 2)
+
+    plt = plot(xlabel="Itérations", ylabel="Norme", title="Problème: $pbname", yscale=:log10, legend=:topright)
+
+    for method in methods
+        norms = []
+        aresiduals = []
+        residuals = []
+        function my_callback(workspace)
+            xk = workspace.x[end-n+1:end]
+            push!(norms, norm(xk - x_qr))
+            push!(residuals, b - A * xk)
+            push!(aresiduals, norm(A' * (b - A * xk)))
+            return false
+        end
+
+        M, rhs = build_system(A, b)
+        if method == "minres"
+            res, histo = Krylov.minres(M, rhs, history=true, callback=my_callback)
+            plot!(1:length(histo.residuals), histo.residuals; label="Res-MINRES", linewidth=2, color=:green)
+            plot!(1:length(aresiduals), aresiduals; label="ARes-MINRES", linewidth=2, color=:orange)
+        elseif method == "minres_qlp"
+            res, histo = Krylov.minres_qlp(M, rhs, history=true, callback=my_callback)
+            plot!(1:length(histo.residuals), histo.residuals; label="Res-MINRES", linewidth=2, color=:green)
+            plot!(1:length(aresiduals), aresiduals; label="ARes-MINRES", linewidth=2, color=:orange)
+        elseif method == "minares"
+            res, histo = Krylov.minares(M, rhs, history=true, callback=my_callback)
+            plot!(1:length(histo.residuals), histo.residuals; label="Res-MINARES", linewidth=2, color=:blue)
+            plot!(1:length(aresiduals), aresiduals; label="ARes-MINARES", linewidth=2, color=:red)
+        elseif method == "symmlq"
+            res, histo = Krylov.symmlq(M, rhs, history=true, callback=my_callback)
+            plot!(1:length(histo.residuals), histo.residuals; label="Res-SYMMLQ", linewidth=2, color=:purple)
+            plot!(1:length(aresiduals), aresiduals; label="ARes-SYMMLQ", linewidth=2, color=:magenta)
+        end
+    end
+    display(plt)
+end
 ```
 
 Commenter ces résultats sur base de ce qui a été vu en classe.
+
+On peut voir à partir du tableau et du graphique que seulement la méthode minares permet d'obtenir une solution acceptable. Toutes les autres méthodes arrivent à une solution avec un résidul final et un résidu d'optimalité final bien plus grand que ceuc obtenus par minares. On peut remarquer que ces trois autres méthodes ont un nombre d'itération très faible comparativement à minares.
 
 ## Problèmes de moindre norme
 
@@ -112,23 +275,198 @@ Expliquer.
 Tracer sur un graphe l'évolution de la norme de la solution et de l'erreur en norme euclidienne.
 
 ```{julia}
-# votre code ici
+solveLQ(A, b) = lq(Matrix(A)) \ b
 ```
 
-Commenter ces résultats sur base de ce qui a été vu en classe.
+```{julia}
+all_x = Vector{Vector{Float64}}()
+
+function save_x_callback(workspace)
+    push!(all_x, copy(workspace.x))
+    return false
+end
+```
+
+
+```{julia}
+problems = ["illc1033", "illc1850", "well1033", "well1850"]
+methods = ["lsqr", "lsmr", "craig"]
+results = Matrix{Any}(undef, 0, 8)
+
+all_x = Vector{Vector{Float64}}()
+for name in problems
+    all_x = Vector{Vector{Float64}}()
+    A, b = get_mm(name)
+    m, n = size(A)
+    b2 = b[1:n]
+    x_ref = solveLQ(A',b2)
+    for method in methods
+        if method == "lsqr"
+            res, histo = Krylov.lsqr(A', b2, history=true,callback=save_x_callback)
+        elseif method == "lsmr"
+            res, histo = Krylov.lsmr(A', b2, history=true,callback=save_x_callback)
+        elseif method == "craig"
+            res, y, histo = Krylov.craig(A', b2, history=true,callback=save_x_callback)
+        end
+        niter = histo.niter
+        normsol0 = norm(all_x[1])
+        normsolf = norm(res)
+        error0 = norm(all_x[1]-x_ref)
+        errorf = norm(all_x[end]-x_ref)
+        status = histo.status
+        results = vcat(results, [name method niter normsol0 normsolf error0 errorf status])
+    end
+end
+
+header = ["problem", "method", "niter", "norm0", "norm", "err0", "err", "status"]
+pretty_table(results, header = header)
+
+```
+
+
+```{julia}
+methods = ["minres", "minres_qpl", "minares", "symmlq"]
+
+for (i, pbname) in enumerate(problems)
+    println("Problème: $pbname")
+
+    A, b = get_mm(pbname)
+    x_qr = solve_QR(A, b)
+    n = size(A, 2)
+
+    plt = plot(xlabel="Itérations", ylabel="Norme", title="Problème: $pbname", legend=:topright)
+
+    for method in methods
+        norms = Float64[]
+        error = Float64[]
+        function my_callback(workspace)
+            xk = workspace.x[end-n+1:end]
+            push!(error, norm(xk - x_qr))
+            push!(norms, norm(xk))
+            return false
+        end
+
+        M, rhs = build_system(A, b)
+        if method == "minres"
+            res, histo = Krylov.minres(M, rhs, history=true, callback=my_callback)
+            plot!(1:length(norms), norms; label="norm-MINRES", linewidth=2, color=:green)
+            plot!(1:length(error), error; label="error-MINRES", linewidth=2, color=:orange)
+        elseif method == "minres_qlp"
+            res, histo = Krylov.minres_qlp(M, rhs, history=true, callback=my_callback)
+            plot!(1:length(norms), norms; label="norm-MINRES", linewidth=2, color=:green)
+            plot!(1:length(error), error; label="error-MINRES", linewidth=2, color=:orange)
+        elseif method == "minares"
+            res, histo = Krylov.minares(M, rhs, history=true, callback=my_callback)
+            plot!(1:length(norms), norms; label="norm-MINARES", linewidth=2, color=:blue)
+            plot!(1:length(error), error; label="error-MINARES", linewidth=2, color=:red)
+        elseif method == "symmlq"
+            res, histo = Krylov.symmlq(M, rhs, history=true, callback=my_callback)
+            plot!(1:length(norms), norms; label="norm-SYMMLQ", linewidth=2, color=:purple)
+            plot!(1:length(error), error; label="error-SYMMLQ", linewidth=2, color=:magenta)
+        end
+    end
+    display(plt)
+end
+```
+
+Je viens de voir que je me suis complètement mélangé sur cette section. Je n'ai pas tracé les courbes pour les 3 algorithmes lsmr, lsqr et craig... C'est pourquoi j'ai eu quelques problèmes dans l'implémentation.
 
 ### Méthodes basées sur Lanczos
 
 Répéter la question précédente en appliquant MINRES, MINRES-QLP, MINARES et SYMMLQ sur le système de point de selle et produire un tableau semblable.
 
 ```{julia}
-# votre code ici
+problems = ["illc1033", "illc1850", "well1033", "well1850"]
+lanczos_methods = ["minres", "minresqlp", "minares", "symmlq"]
+results = Matrix{Any}(undef, 0, 8)
+
+for name in problems
+    A, b = get_mm(name)
+    m, n = size(A)
+    K, rhs = build_system(A,b)
+    x_ref = solveLQ(K, rhs)
+
+    for method in lanczos_methods
+        all_x = Vector{Vector{Float64}}()
+        function save_x_callback(workspace)
+            xk = workspace.x
+            push!(all_x, copy(xk))
+            return false
+        end
+        res, histo = nothing, nothing
+        if method == "minres"
+            res, histo = Krylov.minres(K, rhs, history=true, callback=save_x_callback)
+        elseif method == "minresqlp"
+            res, histo = Krylov.minres_qlp(K, rhs, history=true, callback=save_x_callback)
+        elseif method == "minares"
+            res, histo = Krylov.minares(K, rhs, history=true, callback=save_x_callback)
+        elseif method == "symmlq"
+            res, histo = Krylov.symmlq(K, rhs, history=true, callback=save_x_callback)
+        end
+        niter = histo.niter
+        x0 = all_x[1]
+        xf = all_x[end]
+        norm0 = norm(x0)
+        normf = norm(xf)
+        err0 = norm(x0 - x_ref)
+        errf = norm(xf - x_ref)
+        status = histo.status
+        results = vcat(results, [name method niter norm0 normf err0 errf status])
+    end
+
+end
+
+header = ["problem", "method", "niter", "norm0", "norm", "err0", "err", "status"]
+pretty_table(results, header = header)
 ```
 
 Tracer sur un graphe l'évolution du résidu d'optimalité du problème aux moindres carrés et du résidu du système de point de selle.
 
 ```{julia}
-# votre code ici
+for pbname in problems
+    println("Problème: $pbname")
+    A, b = get_mm(pbname)
+    m, n = size(A)
+    K, rhs = build_system(A, b)
+
+    plt = plot(
+        xlabel="Itérations", ylabel="Norme",
+        title="Problème: $pbname", yscale=:log10, legend=:topright
+    )
+
+    for (method, color) in zip(
+            ["minres", "minresqlp", "minares", "symmlq"],
+            [:green, :cyan, :blue, :purple])
+        
+        all_x = Vector{Vector{Float64}}()
+        function save_x_callback(workspace)
+            push!(all_x, copy(workspace.x))
+            return false
+        end
+
+        res, histo = nothing, nothing
+        if method == "minres"
+            res, histo = Krylov.minres(K, rhs, history=true, callback=save_x_callback)
+        elseif method == "minresqlp"
+            res, histo = Krylov.minres_qlp(K, rhs, history=true, callback=save_x_callback)
+        elseif method == "minares"
+            res, histo = Krylov.minares(K, rhs, history=true, callback=save_x_callback)
+        elseif method == "symmlq"
+            res, histo = Krylov.symmlq(K, rhs, history=true, callback=save_x_callback)
+        end
+
+        plot!(1:length(histo.residuals), histo.residuals; label="Res-$method", color=color, linewidth=2)
+
+        aresiduals = [norm(A' * (b - A * xk[end-n+1:end])) for xk in all_x]
+
+        plot!(1:length(aresiduals), aresiduals;
+              label="ARes-$method", color=color, linestyle=:dash, linewidth=2)
+    end
+    display(plt)
+end
+
 ```
 
 Commenter ces résultats sur base de ce qui a été vu en classe.
+
+On peut voir ici que la pluspart des algorithmes semblent s'arrêter prématurément dans les itérations, En effet, l'algorithme minres-qlp donne des solution nettement meilleures que les autres algorithmes et c'est aussi lui qui arrive au plus d'itération. 
