@@ -2,8 +2,8 @@
 title: "Rapport de laboratoire 4"
 subtitle: "MTH8211"
 author:
-  - name: Mon nom
-    email: mon.adresse@polymtl.ca
+  - name: Hortense Beaudoin
+    email: hortense.beaudoin@polymtl.ca
     affiliation:
       - name: Polytechnique Montréal
 format:
@@ -46,8 +46,16 @@ Sur base du code vu en laboratoire, écrire une fonction qui prend en entrée un
 
 ```{julia}
 function get_mm(matrix_name)
-  # A = ...
-  # b = ...
+  ssmc = ssmc_db()
+  pb = ssmc_matrices(ssmc, "", matrix_name)
+  fetch_ssmc(pb, format="MM")
+  pb_path = fetch_ssmc(pb, format="MM")
+  path_mtx = pb_path[1]
+
+  # Récupère A et B avec MatrixMarket
+  A = MatrixMarket.mmread(joinpath(path_mtx, matrix_name * ".mtx"));
+  b = MatrixMarket.mmread(joinpath(path_mtx, matrix_name * "_b.mtx"))[:];
+
   return A, b
 end
 ```
@@ -68,32 +76,84 @@ Votre tableau doit montrer
 * le statuts final.
 
 ```{julia}
-# votre code ici
+Pkg.add("PrettyTables")
+Pkg.add("DataFrames")
+Pkg.add("Plots")
+using PrettyTables
+using DataFrames
+using Plots
+
+problems = ["illc1033", "illc1850", "well1033", "well1850"];
+```
+
+```{julia}
+{{< include ls_gk_table.jl >}}
 ```
 
 Tracer sur un graphe l'évolution du résidu aux moindres carrés, du résidu d'optimalité du problème aux moindres carrés, et de l'erreur en norme euclidienne.
 
 ```{julia}
-# votre code ici
+{{< include ls_plot_gk.jl >}}
+```
+
+```{julia}
+plot(p1)
+```
+```{julia}
+plot(p2)
+```
+```{julia}
+plot(p3)
+```
+```{julia}
+plot(p4)
 ```
 
 Commenter ces résultats sur base de ce qui a été vu en classe.
+
+Je commence par m'excuser de ne pas avoir réussi à mettre les plot en log scale ! Je pense que le problème vient du fait que mes jeux de données ont des longueurs différentes (nombre d'itération différent selon la méthode) et que Julia doit compléter par défaut les jeux de données les plus courts. J'ai tenté de régler le problème, mais mes quelques tentatives ont échouées. Le visuel n'est pas idéal, mais voici mes observations ! 
+
+Tel qu'attendu avec ces deux méthodes, le résidus $||r_k||$ diminue de manière monotone. Pour Lsmr, comme vu en classe, le résidu d'optimalité diminue aussi de manière monotone, ce qui n'est pas le cas avec Lsqr (on le voit bien malgré l'échelle.) On a aussi une diminution monotone de l'erreur pour les deux méthodes, comme attendu. On ne voit pas toutes les itérations de Lsqr sur le graphique, mais l'erreur ne diminue pas vraiment au dela de la valeur affichée. L'erreur demeure vraiment élevée pour le première problème `illc1033`, mais s'approche de 0 pour les autres, ce qui me laisse penser que mon approche pour calculer l'erreur est correcte. Par contre, cette grosse erreur peut provenir du fait que le $x^*$ a été calculé en faisant une résolution $QR$.
+
+LSQR prends plus d'itérations avant de s'arrêter, mais retourne dans l'ensemble des résidus plus petits (autant pour le problème de moindre norme que pour le résidus d'optimalité) lorsqu'il y a résolution. Lsmr n'échoue pour aucun des problèmes cependant. 
 
 ### Méthodes basées sur Lanczos
 
 Répéter la question précédente en appliquant MINRES, MINRES-QLP, MINARES et SYMMLQ sur le système de point de selle et produire un tableau semblable.
 
 ```{julia}
-# votre code ici
+Pkg.add("SparseArrays")
+using SparseArrays
+```
+
+```{julia}
+{{< include ls_lz_table.jl >}}
 ```
 
 Tracer sur un graphe l'évolution du résidu d'optimalité du problème aux moindres carrés et du résidu du système de point de selle.
 
 ```{julia}
-# votre code ici
+{{< include ls_plot_lz.jl >}}
+```
+
+```{julia}
+plot(p1)
+```
+```{julia}
+plot(p2)
+```
+```{julia}
+plot(p3)
+```
+```{julia}
+plot(p4)
 ```
 
 Commenter ces résultats sur base de ce qui a été vu en classe.
+
+Les résultats de Symmlq et de Minres sont difficiles à voir, en raison de leur faible nombre d'itérations par rapport aux deux autres méthodes. On voit qu'aucun des résidus ne semble diminuer de manière monotone, mais c'est normal puisque dans les problèmes auxquels on s'intéresse, $A$ n'est pas Hermitienne et il s'agit de la condition pour observer ces comportements (problème symétrique.) Le résidu de Minres-Qlp est celui qui évolue de la manière la plus erratique, mais on sait par le tableau qu'il finit par atteindre les valeurs les plus basses. 
+
+Symmlq est la méthode qui résoud les problèmes le plus rapidement, mais elle renvoie aussi les plus gros résidus (moindre carré et point de selle.) Minres-Qlp demande le plus d'itérations, mais renvoie les résidus finaux les plus faibles. Elle échoue cependant pour le premier problème. Minares semble être un bon compromis entre ces deux méthodes et Minres performe de manière semblable à Symmlq, mais en donnant un résidus plus faible pour le problème de point de selle. Seule Minres-Qlp échoue la résolution pour un problème. 
 
 ## Problèmes de moindre norme
 
@@ -109,26 +169,62 @@ Votre tableau doit montrer
 Les itérés générés par ces trois méthodes vérifient-ils $A x_k = b$ à chaque itération ?
 Expliquer.
 
+```{julia}
+{{< include ln_gk_table.jl >}}
+```
+
 Tracer sur un graphe l'évolution de la norme de la solution et de l'erreur en norme euclidienne.
 
 ```{julia}
-# votre code ici
+{{< include ln_plot_gk.jl >}}
+```
+```{julia}
+plot(p1)
+```
+```{julia}
+plot(p2)
+```
+```{julia}
+plot(p3)
+```
+```{julia}
+plot(p4)
 ```
 
 Commenter ces résultats sur base de ce qui a été vu en classe.
+
+On observe graphiquement que la norme de $x$ augmente de manière monotone pour les 3 méthodes, ce qui correspond à ce qu'on a vu en classe. On voit aussi que le résidu diminue de manière monotone pour Lsqr et Lsmr - comme dans la portion précédente -, mais pas pour Craig. C'est aussi cohérent avec la théorie, puisque Craig diminue de manière monotone l'erreur, mais pas forcément le résidu. 
+
+Craig et Lsqr donnent des résultats finaux extrêmement similaires, autant du point de vu des résidus que de la norme de $x$. Les résultats de Lsmr sont également semblables et sont atteint en moins d'itérations et ce, peu importe le problème. 
 
 ### Méthodes basées sur Lanczos
 
 Répéter la question précédente en appliquant MINRES, MINRES-QLP, MINARES et SYMMLQ sur le système de point de selle et produire un tableau semblable.
 
 ```{julia}
-# votre code ici
+{{< include ln_lz_table.jl >}}
 ```
 
 Tracer sur un graphe l'évolution du résidu d'optimalité du problème aux moindres carrés et du résidu du système de point de selle.
 
 ```{julia}
-# votre code ici
+{{< include ln_plot_lz.jl >}}
+```
+```{julia}
+plot(p1)
+```
+```{julia}
+plot(p2)
+```
+```{julia}
+plot(p3)
+```
+```{julia}
+plot(p4)
 ```
 
 Commenter ces résultats sur base de ce qui a été vu en classe.
+
+Graphiquement, on voit encore une fois qu'aucun résidu ne diminue de manière monotone. C'est une fois de plus conforme avec la théorie pour des systèmes non symmétriques. De manière générale, le résidu du problème de point de selle demeure plus élevé que le résidu du problème de moindre norme, indépendamment de la méthode. 
+
+Il y a moins de disparité dans le nombre d'itérations ici que pour les problèmes de moindres carrés. Minres-Qlp effectue encore le plus d'itérations, mais renvoie aussi, dans l'ensemble, les résultats les plus bas. Symmlq performe aussi bien que Minares dans ce cas et ces deux méthodes donnent des résidus un peu plus élevées au problème de point de selle. 
