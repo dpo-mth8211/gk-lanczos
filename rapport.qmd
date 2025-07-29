@@ -2,8 +2,8 @@
 title: "Rapport de laboratoire 4"
 subtitle: "MTH8211"
 author:
-  - name: Mon nom
-    email: mon.adresse@polymtl.ca
+  - name: Yasmine Amami
+    email: yasmine.amami@polymtl.ca
     affiliation:
       - name: Polytechnique Montréal
 format:
@@ -29,10 +29,17 @@ Pkg.activate("labo4_env")
 Pkg.add("Krylov")
 Pkg.add("SuiteSparseMatrixCollection")
 Pkg.add("MatrixMarket")
+Pkg.add("PrettyTables")
+Pkg.add("Plots")
 
-using LinearAlgebra
+using LinearAlgebra, SparseArrays
 using MatrixMarket
 using Krylov, SuiteSparseMatrixCollection
+using Plots
+using PrettyTables
+
+# on inclut la fonction run_experiment depuis le fichier externe
+include("run_experiment_fixed.jl")
 ```
 
 # Contexte
@@ -46,8 +53,13 @@ Sur base du code vu en laboratoire, écrire une fonction qui prend en entrée un
 
 ```{julia}
 function get_mm(matrix_name)
-  # A = ...
-  # b = ...
+  ssmc = ssmc_db()
+  pb = ssmc_matrices(ssmc, "", matrix_name)
+  fetch_ssmc(pb, format="MM")
+  pb_path = fetch_ssmc(pb, format="MM")
+  path_mtx = pb_path[1]
+  A = MatrixMarket.mmread(joinpath(path_mtx, matrix_name * ".mtx"))
+  b = MatrixMarket.mmread(joinpath(path_mtx, matrix_name * "_b.mtx"))
   return A, b
 end
 ```
@@ -67,33 +79,49 @@ Votre tableau doit montrer
 * la norme du résidu d'optimalité du problème aux moindres carrés initial et final ;
 * le statuts final.
 
-```{julia}
-# votre code ici
-```
-
 Tracer sur un graphe l'évolution du résidu aux moindres carrés, du résidu d'optimalité du problème aux moindres carrés, et de l'erreur en norme euclidienne.
 
 ```{julia}
-# votre code ici
+## illc1033
+run_experiment("illc1033", "least_squares", ["lsqr", "lsmr"])
+
+## illc1850
+run_experiment("illc1850", "least_squares", ["lsqr", "lsmr"])
+
+## well1033
+run_experiment("well1033", "least_squares", ["lsqr", "lsmr"])
+
+## well1850 
+run_experiment("well1850", "least_squares", ["lsqr", "lsmr"])
 ```
 
 Commenter ces résultats sur base de ce qui a été vu en classe.
+
+Les méthodes appliquées aux systèmes augmentés montrent des différences importantes dans le nombre d'itérations nécessaires et leurs statuts finaux. Cela confirme qu'il est essentiel de choisir un critère d'arrêt adapté au problème spécifique, sinon on risque de perdre des informations importantes. Un point particulièrement intéressant est que l'algorithme MINARES produit des résidus qui correspondent exactement aux résidus d'optimalité du problème des moindres carrés. Cette caractéristique fait de MINARES une méthode particulièrement bien adaptée pour résoudre les systèmes de point de selle issus des problèmes aux moindres carrés.
 
 ### Méthodes basées sur Lanczos
 
 Répéter la question précédente en appliquant MINRES, MINRES-QLP, MINARES et SYMMLQ sur le système de point de selle et produire un tableau semblable.
 
-```{julia}
-# votre code ici
-```
-
 Tracer sur un graphe l'évolution du résidu d'optimalité du problème aux moindres carrés et du résidu du système de point de selle.
 
 ```{julia}
-# votre code ici
+## illc1033
+run_experiment("illc1033", "saddle_primal", ["minres", "minres_qlp", "minares", "symmlq"])
+
+## illc1850
+run_experiment("illc1850", "saddle_primal", ["minres", "minres_qlp", "minares", "symmlq"])
+
+## well1033
+run_experiment("well1033", "saddle_primal", ["minres", "minres_qlp", "minares", "symmlq"])
+
+## well1850 
+run_experiment("well1850", "saddle_primal", ["minres", "minres_qlp", "minares", "symmlq"])
 ```
 
 Commenter ces résultats sur base de ce qui a été vu en classe.
+
+Les méthodes basées sur Lanczos appliquées aux systèmes de point de selle montrent des comportements de convergence variés. MINRES et MINRES-QLP réduisent efficacement le résidu du système global, tandis que MINARES se distingue par sa capacité à minimiser directement le résidu d'optimalité du problème des moindres carrés. SYMMLQ présente un comportement différent, avec une convergence parfois plus lente mais une meilleure stabilité numérique dans certains cas. Ces différences soulignent l'importance du choix de l'algorithme en fonction des caractéristiques spécifiques du problème à résoudre.
 
 ## Problèmes de moindre norme
 
@@ -112,23 +140,43 @@ Expliquer.
 Tracer sur un graphe l'évolution de la norme de la solution et de l'erreur en norme euclidienne.
 
 ```{julia}
-# votre code ici
+## illc1033
+run_experiment("illc1033", "minimum_norm", ["craig", "lsqr", "lsmr"])
+
+## illc1850
+run_experiment("illc1850", "minimum_norm", ["craig", "lsqr", "lsmr"])
+
+## well1033
+run_experiment("well1033", "minimum_norm", ["craig", "lsqr", "lsmr"])
+
+## well1850 
+run_experiment("well1850", "minimum_norm", ["craig", "lsqr", "lsmr"])
 ```
 
 Commenter ces résultats sur base de ce qui a été vu en classe.
+
+Les résultats montrent que les trois méthodes présentent généralement un comportement prévisible : l'erreur diminue à chaque itération, tandis que la norme de la solution augmente progressivement. Les méthodes CRAIG, LSQR et LSMR convergent vers des solutions de normes similaires pour well1033 et well1850, mais montrent des différences pour les problèmes illc. Le statut final varie selon la méthode et le problème traité, ce qui souligne l'importance du choix de l'algorithme en fonction des caractéristiques de la matrice.
 
 ### Méthodes basées sur Lanczos
 
 Répéter la question précédente en appliquant MINRES, MINRES-QLP, MINARES et SYMMLQ sur le système de point de selle et produire un tableau semblable.
 
-```{julia}
-# votre code ici
-```
-
 Tracer sur un graphe l'évolution du résidu d'optimalité du problème aux moindres carrés et du résidu du système de point de selle.
 
 ```{julia}
-# votre code ici
+## illc1033
+run_experiment("illc1033", "saddle_adjoint", ["minres", "minres_qlp", "minares", "symmlq"])
+
+## illc1850
+run_experiment("illc1850", "saddle_adjoint", ["minres", "minres_qlp", "minares", "symmlq"])
+
+## well1033
+run_experiment("well1033", "saddle_adjoint", ["minres", "minres_qlp", "minares", "symmlq"])
+
+## well1850 
+run_experiment("well1850", "saddle_adjoint", ["minres", "minres_qlp", "minares", "symmlq"])
 ```
 
 Commenter ces résultats sur base de ce qui a été vu en classe.
+
+Les résultats montrent que les différentes méthodes de Lanczos appliquées aux systèmes adjoints résolvent efficacement le problème de moindre norme, mais avec des comportements distincts. MINRES et MINRES-QLP réduisent progressivement le résidu du système global, tandis que MINARES cible spécifiquement les résidus liés au problème de moindre norme original. SYMMLQ, bien que parfois plus lent, offre une stabilité complémentaire.
