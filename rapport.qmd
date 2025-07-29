@@ -150,7 +150,6 @@ for i in 1:4
   xlabel!("Itérations")
   title!("Comparaison des méthodes pour " * name)
 
-  savefig("ls_$(name).pdf")
 end
 ```
 
@@ -272,7 +271,6 @@ for i in 1:4
   xlabel!("Itérations")
   title!("Comparaison des méthodes pour " * name)
 
-  savefig("Ar_$(name).pdf")
 end
 ```
 
@@ -421,7 +419,6 @@ for i in 1:4
   xlabel!("Itérations")
   title!("Comparaison des méthodes pour " * name)
 
-  savefig("error_$(name).pdf")
 end
 ```
 
@@ -565,7 +562,6 @@ for i in 1:4
   xlabel!("Itérations")
   title!("Comparaison des méthodes pour " * name)
 
-  savefig("error_lan_$(name).pdf")
 end
 ```
 
