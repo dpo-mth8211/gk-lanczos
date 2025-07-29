@@ -29,10 +29,12 @@ Pkg.activate("labo4_env")
 Pkg.add("Krylov")
 Pkg.add("SuiteSparseMatrixCollection")
 Pkg.add("MatrixMarket")
+Pkg.add("Plots")
 
 using LinearAlgebra
 using MatrixMarket
 using Krylov, SuiteSparseMatrixCollection
+using Plots
 ```
 
 # Contexte
@@ -75,6 +77,9 @@ Tracer sur un graphe l'évolution du résidu aux moindres carrés, du résidu d'
 
 ```{julia}
 # votre code ici
+using Plots
+x = 1:100
+plot(x, sin.(x))
 ```
 
 Commenter ces résultats sur base de ce qui a été vu en classe.
